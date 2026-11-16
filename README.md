@@ -8,15 +8,15 @@ Ampliação de imagens em **2×, 4× e 8×** usando uma GPU NVIDIA T4 no Google 
 - RealESRGAN x4plus Anime 6B para ilustrações e estampas.
 - Processamento CUDA FP16 em blocos de 400 px com sobreposição.
 - PNG transparente preservado sem converter o fundo para branco.
-- Comparação entre original e resultado usando os arquivos completos.
-- Visualização ajustada à tela ou em 100% dos pixels reais.
+- Comparação HD progressiva: abre com preview leve e carrega uma inspeção WebP de até 4096 px para revelar a diferença real do upscale sem travar a página.
+- Zoom ancorado no ponteiro do mouse, arraste para navegar e divisor antes/depois alinhado.
 - Progresso visual por blocos.
 - Inicialização organizada com porcentagem, log completo, cópia do log e diagnóstico de erros.
 - Página externa compatível com o endereço protegido do proxy do Google Colab.
 - Downloads preservam o nome original e informam escala, modelo e modo utilizado.
-- Preview leve de até 1024 px; o download mantém a resolução final completa.
-- Download em PNG sem perdas ou WebP Q95 compacto com transparência.
-- Visualizador compacto com painel lateral, comparação por alça, zoom pela roda do mouse e arraste para navegar.
+- Preview inicial leve de até 1024 px; o download mantém a resolução final completa.
+- Escolha explícita entre PNG sem perdas, WebP Q95 com transparência e JPEG Q95 sempre com fundo branco.
+- Layout responsivo: cartões lado a lado em tela larga e empilhados em tela estreita.
 
 ## Executar no Colab
 

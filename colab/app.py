@@ -82,7 +82,7 @@ def new_id(prefix: str) -> str:
 
 
 def artifact_public(item: dict[str, Any]) -> dict[str, Any]:
-    return {key: value for key, value in item.items() if key not in ('path', 'previewPath', 'webpPath')}
+    return {key: value for key, value in item.items() if key not in ('path', 'previewPath', 'inspectPath', 'webpPath')}
 
 
 def processed_filename(original: str, scale: int, model_kind: str, detail_mode: str, extension: str = 'png') -> str:
@@ -100,6 +100,17 @@ def create_preview(image: np.ndarray, target: Path, max_side: int = 1024) -> Pat
     ok, encoded = cv2.imencode('.png', preview, [cv2.IMWRITE_PNG_COMPRESSION, 3])
     if not ok:
         raise RuntimeError('Falha ao gerar preview leve.')
+    encoded.tofile(target)
+    return target
+
+
+def create_inspection_preview(image: np.ndarray, target: Path, max_side: int = 4096) -> Path:
+    height, width = image.shape[:2]
+    ratio = min(1.0, max_side / max(width, height))
+    preview = image if ratio == 1.0 else cv2.resize(image, (max(1, round(width * ratio)), max(1, round(height * ratio))), interpolation=cv2.INTER_AREA)
+    ok, encoded = cv2.imencode('.webp', preview, [cv2.IMWRITE_WEBP_QUALITY, 92])
+    if not ok:
+        raise RuntimeError('Falha ao gerar preview de inspeção.')
     encoded.tofile(target)
     return target
 
@@ -272,6 +283,8 @@ def process_job(job_id: str) -> None:
             encoded.tofile(output_path)
             preview_path = ARTIFACTS_DIR / f'{result_id}-preview.png'
             create_preview(output, preview_path)
+            inspect_path = ARTIFACTS_DIR / f'{result_id}-inspect.webp'
+            create_inspection_preview(output, inspect_path)
             out_height, out_width = output.shape[:2]
             webp_path = None
             if max(out_width, out_height) <= 16383:
@@ -282,7 +295,7 @@ def process_job(job_id: str) -> None:
                     encoded_webp.tofile(target_webp)
                     webp_path = str(target_webp)
             filename = processed_filename(source['filename'], scale, options.get('upscaleModel', 'general'), options.get('detailMode', 'faithful'))
-            result = {'id': result_id, 'filename': filename, 'mime': 'image/png', 'width': out_width, 'height': out_height, 'hasAlpha': output.ndim == 3 and output.shape[2] == 4, 'path': str(output_path), 'previewPath': str(preview_path), 'webpPath': webp_path, 'parentId': source['id']}
+            result = {'id': result_id, 'filename': filename, 'mime': 'image/png', 'width': out_width, 'height': out_height, 'hasAlpha': output.ndim == 3 and output.shape[2] == 4, 'path': str(output_path), 'previewPath': str(preview_path), 'inspectPath': str(inspect_path), 'webpPath': webp_path, 'parentId': source['id']}
             artifacts[result_id] = result
             job.update(status='done', phase='done', resultArtifactId=result_id, progress={'completedTiles': total, 'totalTiles': total}, metrics={'durationMs': round((time.perf_counter() - started) * 1000), 'peakRssBytes': peak, 'modelId': MODEL_SPECS[options.get('upscaleModel', 'general')]['name']})
     except InterruptedError as exc:
@@ -380,12 +393,23 @@ def cancel_job(job_id: str) -> dict[str, bool]:
 
 
 @app.get('/api/artifacts/{artifact_id}/preview')
-def preview(artifact_id: str, full: bool = False) -> FileResponse:
+def preview(artifact_id: str, full: bool = False, inspection: bool = False) -> FileResponse:
     item = artifacts.get(artifact_id)
     if not item:
         raise HTTPException(404, 'Imagem não encontrada.')
     if full:
         return FileResponse(item['path'], media_type=item['mime'])
+    if inspection:
+        inspect_path = item.get('inspectPath')
+        if not inspect_path:
+            source = np.fromfile(item['path'], dtype=np.uint8)
+            image = cv2.imdecode(source, cv2.IMREAD_UNCHANGED)
+            if image is None:
+                raise HTTPException(500, 'Não foi possível gerar o preview de inspeção.')
+            inspect_file = ARTIFACTS_DIR / f"{artifact_id}-inspect.webp"
+            inspect_path = str(create_inspection_preview(image, inspect_file))
+            item['inspectPath'] = inspect_path
+        return FileResponse(inspect_path, media_type='image/webp')
     preview_path = item.get('previewPath')
     if not preview_path:
         source = np.fromfile(item['path'], dtype=np.uint8)
@@ -399,7 +423,7 @@ def preview(artifact_id: str, full: bool = False) -> FileResponse:
 
 
 @app.get('/api/artifacts/{artifact_id}/download')
-def download_artifact(artifact_id: str, format: str = 'png', background: str = '#000000') -> FileResponse:
+def download_artifact(artifact_id: str, format: str = 'png', background: str = '#ffffff') -> FileResponse:
     item = artifacts.get(artifact_id)
     if not item:
         raise HTTPException(404, 'Imagem não encontrada.')
@@ -411,10 +435,8 @@ def download_artifact(artifact_id: str, format: str = 'png', background: str = '
         webp_name = str(Path(item['filename']).with_suffix('.webp'))
         return FileResponse(item['webpPath'], media_type='image/webp', filename=webp_name)
     image = Image.open(item['path']).convert('RGBA')
-    color = background.lstrip('#')
-    rgb = tuple(int(color[i:i+2], 16) for i in (0, 2, 4)) if len(color) == 6 else (0, 0, 0)
-    flat = Image.new('RGB', image.size, rgb); flat.paste(image, mask=image.getchannel('A'))
-    target = ARTIFACTS_DIR / f'{artifact_id}-black.jpg'; flat.save(target, quality=95, subsampling=0)
+    flat = Image.new('RGB', image.size, (255, 255, 255)); flat.paste(image, mask=image.getchannel('A'))
+    target = ARTIFACTS_DIR / f'{artifact_id}-white.jpg'; flat.save(target, quality=95, subsampling=0)
     jpeg_name = str(Path(item['filename']).with_suffix('.jpg'))
     return FileResponse(target, media_type='image/jpeg', filename=jpeg_name)
 

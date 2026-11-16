@@ -23,7 +23,7 @@ Esta primeira versão executa somente ampliação de imagem em GPU CUDA.
 
 ## Transparência
 
-O RGB passa pela IA, enquanto o canal alpha é ampliado separadamente com Lanczos para preservar a transparência sem criar fundo branco. As cores das bordas transparentes são estendidas antes da IA para reduzir halos. Os botões quadriculado, branco e preto alteram apenas a visualização. JPEG não suporta transparência e é exportado com fundo preto.
+O RGB passa pela IA, enquanto o canal alpha é ampliado separadamente com Lanczos para preservar a transparência sem criar fundo branco. As cores das bordas transparentes são estendidas antes da IA para reduzir halos. Os botões quadriculado, branco e preto alteram apenas a visualização. JPEG não suporta transparência e é sempre exportado com fundo branco.
 
 ## Limites
 
