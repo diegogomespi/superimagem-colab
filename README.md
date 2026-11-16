@@ -15,6 +15,7 @@ Ampliação de imagens em **2×, 4× e 8×** usando uma GPU NVIDIA T4 no Google 
 - Página externa compatível com o endereço protegido do proxy do Google Colab.
 - Downloads preservam o nome original e informam escala, modelo e modo utilizado.
 - Preview leve de até 1024 px; o download mantém a resolução final completa.
+- Download em PNG sem perdas ou WebP Q95 compacto com transparência.
 
 ## Executar no Colab
 

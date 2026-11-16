@@ -82,7 +82,7 @@ def new_id(prefix: str) -> str:
 
 
 def artifact_public(item: dict[str, Any]) -> dict[str, Any]:
-    return {key: value for key, value in item.items() if key not in ('path', 'previewPath')}
+    return {key: value for key, value in item.items() if key not in ('path', 'previewPath', 'webpPath')}
 
 
 def processed_filename(original: str, scale: int, model_kind: str, detail_mode: str, extension: str = 'png') -> str:
@@ -273,8 +273,16 @@ def process_job(job_id: str) -> None:
             preview_path = ARTIFACTS_DIR / f'{result_id}-preview.png'
             create_preview(output, preview_path)
             out_height, out_width = output.shape[:2]
+            webp_path = None
+            if max(out_width, out_height) <= 16383:
+                job['phase'] = 'encoding_compact'
+                ok_webp, encoded_webp = cv2.imencode('.webp', output, [cv2.IMWRITE_WEBP_QUALITY, 95])
+                if ok_webp:
+                    target_webp = ARTIFACTS_DIR / f'{result_id}-q95.webp'
+                    encoded_webp.tofile(target_webp)
+                    webp_path = str(target_webp)
             filename = processed_filename(source['filename'], scale, options.get('upscaleModel', 'general'), options.get('detailMode', 'faithful'))
-            result = {'id': result_id, 'filename': filename, 'mime': 'image/png', 'width': out_width, 'height': out_height, 'hasAlpha': output.ndim == 3 and output.shape[2] == 4, 'path': str(output_path), 'previewPath': str(preview_path), 'parentId': source['id']}
+            result = {'id': result_id, 'filename': filename, 'mime': 'image/png', 'width': out_width, 'height': out_height, 'hasAlpha': output.ndim == 3 and output.shape[2] == 4, 'path': str(output_path), 'previewPath': str(preview_path), 'webpPath': webp_path, 'parentId': source['id']}
             artifacts[result_id] = result
             job.update(status='done', phase='done', resultArtifactId=result_id, progress={'completedTiles': total, 'totalTiles': total}, metrics={'durationMs': round((time.perf_counter() - started) * 1000), 'peakRssBytes': peak, 'modelId': MODEL_SPECS[options.get('upscaleModel', 'general')]['name']})
     except InterruptedError as exc:
@@ -397,6 +405,11 @@ def download_artifact(artifact_id: str, format: str = 'png', background: str = '
         raise HTTPException(404, 'Imagem não encontrada.')
     if format == 'png':
         return FileResponse(item['path'], media_type='image/png', filename=item['filename'])
+    if format == 'webp':
+        if not item.get('webpPath'):
+            raise HTTPException(400, 'WebP suporta no máximo 16383 px por lado. Baixe o PNG sem perdas.')
+        webp_name = str(Path(item['filename']).with_suffix('.webp'))
+        return FileResponse(item['webpPath'], media_type='image/webp', filename=webp_name)
     image = Image.open(item['path']).convert('RGBA')
     color = background.lstrip('#')
     rgb = tuple(int(color[i:i+2], 16) for i in (0, 2, 4)) if len(color) == 6 else (0, 0, 0)
