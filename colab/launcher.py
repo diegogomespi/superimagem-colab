@@ -158,11 +158,22 @@ def run_from_colab(
             raise RuntimeError("O servidor não respondeu dentro de 90 segundos.")
 
         _append(f"Aplicação pronta: {health['gpu']['name']}")
+        _update("Baixando e validando modelos", "Conferindo os dois arquivos oficiais e carregando na GPU...", 86)
+        models_response = requests.post(f"http://127.0.0.1:{port}/api/models/prepare", timeout=900)
+        models_response.raise_for_status()
+        prepared = models_response.json()
+        if not prepared.get("ok") or len(prepared.get("models", [])) != 2:
+            raise RuntimeError("A validação não confirmou os dois modelos.")
+        for model in prepared["models"]:
+            size_mb = model["bytes"] / 1024**2
+            short_hash = model["sha256"][:12]
+            _append(f"MODELO VALIDADO: {model['name']} | {size_mb:.1f} MB | SHA-256 OK ({short_hash}...) | escala {model['scale']}x | GPU pronta")
+
         _update("Publicando página externa", "Gerando o endereço seguro da sessão...", 95)
         from google.colab import output
 
         page_url = output.eval_js(f"google.colab.kernel.proxyPort({port})")
-        _update("Sistema online!", f"GPU conectada: {health['gpu']['name']}", 100, page_url=page_url)
+        _update("Sistema online!", f"GPU: {health['gpu']['name']} | 2 modelos baixados, validados e carregados", 100, page_url=page_url)
     except Exception as exc:
         _append(f"ERRO: {type(exc).__name__}: {exc}")
         _update("Falha ao iniciar", "Abra o log completo para identificar a etapa.", 100, error=str(exc))

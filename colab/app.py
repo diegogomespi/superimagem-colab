@@ -6,8 +6,11 @@ no diretório temporário da sessão do Colab.
 from __future__ import annotations
 
 import asyncio
+import gc
+import hashlib
 import math
 import os
+import re
 import shutil
 import tempfile
 import threading
@@ -42,12 +45,14 @@ MODEL_SPECS = {
         'name': 'RealESRGAN_x4plus',
         'url': 'https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth',
         'file': 'RealESRGAN_x4plus.pth',
+        'sha256': '4fa0d38905f75ac06eb49a7951b426670021be3018265fd191d2125df9d682f1',
         'blocks': 23,
     },
     'illustration': {
         'name': 'RealESRGAN_x4plus_anime_6B',
         'url': 'https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.2.4/RealESRGAN_x4plus_anime_6B.pth',
         'file': 'RealESRGAN_x4plus_anime_6B.pth',
+        'sha256': 'f872d837d3c90ed2e05227bed711af5671a6fd1c9f7d7e91c911a61f155e99da',
         'blocks': 6,
     },
 }
@@ -80,9 +85,27 @@ def artifact_public(item: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in item.items() if key != 'path'}
 
 
-def download(url: str, target: Path) -> None:
+def processed_filename(original: str, scale: int, model_kind: str, detail_mode: str, extension: str = 'png') -> str:
+    stem = Path(original).stem
+    stem = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', stem).strip(' .')[:140] or 'imagem'
+    model_tag = 'RealESRGAN-x4plus' if model_kind == 'general' else 'RealESRGAN-anime-6B'
+    mode_tag = f"_{'detalhado' if detail_mode == 'detailed' else 'fiel'}" if scale == 8 else ''
+    return f'{stem}_upscale-{scale}x_{model_tag}{mode_tag}.{extension}'
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open('rb') as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b''):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def download(url: str, target: Path, expected_sha256: str) -> None:
     if target.exists() and target.stat().st_size > 1_000_000:
-        return
+        if sha256_file(target) == expected_sha256:
+            return
+        target.unlink(missing_ok=True)
     import urllib.request
     partial = target.with_suffix(target.suffix + '.part')
     partial.unlink(missing_ok=True)
@@ -94,6 +117,9 @@ def download(url: str, target: Path) -> None:
                 shutil.copyfileobj(response, output)
             if partial.stat().st_size <= 1_000_000:
                 raise RuntimeError('O arquivo recebido está incompleto.')
+            actual_sha256 = sha256_file(partial)
+            if actual_sha256 != expected_sha256:
+                raise RuntimeError(f'Assinatura SHA-256 inválida: {actual_sha256}')
             partial.replace(target)
             return
         except Exception as exc:
@@ -110,8 +136,8 @@ def get_model(kind: str, job: dict[str, Any]) -> Any:
     spec = MODEL_SPECS[kind]
     model_path = MODELS_DIR / spec['file']
     job['phase'] = 'loading_model'
-    download(spec['url'], model_path)
     if kind not in models:
+        download(spec['url'], model_path, spec['sha256'])
         descriptor = ModelLoader().load_from_file(str(model_path)).eval().cuda().half()
         if int(descriptor.scale) != 4:
             raise RuntimeError(f'Escala inesperada do modelo: {descriptor.scale}.')
@@ -119,8 +145,8 @@ def get_model(kind: str, job: dict[str, Any]) -> Any:
     return models[kind]
 
 
-def tile_count(width: int, height: int) -> int:
-    return math.ceil(width / 400) * math.ceil(height / 400)
+def tile_count(width: int, height: int, tile: int = 400) -> int:
+    return math.ceil(width / tile) * math.ceil(height / tile)
 
 
 def extend_transparent_colors(bgra: np.ndarray) -> np.ndarray:
@@ -140,11 +166,11 @@ def extend_transparent_colors(bgra: np.ndarray) -> np.ndarray:
     return bgr
 
 
-def upscale_rgb_tiled(bgr: np.ndarray, model: Any, job: dict[str, Any], completed: list[int], total: int) -> np.ndarray:
+def upscale_rgb_tiled(bgr: np.ndarray, model: Any, job: dict[str, Any], completed: list[int], total: int, tile: int = 400) -> np.ndarray:
     height, width = bgr.shape[:2]
     native = 4
     output = np.empty((height * native, width * native, 3), dtype=np.uint8)
-    tile, pad = 400, 24
+    pad = 24
     for y in range(0, height, tile):
         for x in range(0, width, tile):
             if job.get('cancelRequested'):
@@ -164,6 +190,24 @@ def upscale_rgb_tiled(bgr: np.ndarray, model: Any, job: dict[str, Any], complete
             job['progress']['completedTiles'] = min(completed[0], total)
             del tensor, prediction
     return output
+
+
+def upscale_with_fallback(bgr: np.ndarray, model: Any, job: dict[str, Any]) -> tuple[np.ndarray, int]:
+    """Reduz automaticamente o bloco se a GPU não tiver memória suficiente."""
+    height, width = bgr.shape[:2]
+    last_error: Exception | None = None
+    for tile in (400, 320, 256, 192):
+        completed = [0]
+        total = tile_count(width, height, tile)
+        job['progress'] = {'completedTiles': 0, 'totalTiles': total, 'tileSize': tile}
+        try:
+            return upscale_rgb_tiled(bgr, model, job, completed, total, tile), total
+        except torch.cuda.OutOfMemoryError as exc:
+            last_error = exc
+            job['phase'] = 'reducing_tile'
+            gc.collect()
+            torch.cuda.empty_cache()
+    raise RuntimeError(f'A GPU ficou sem memória mesmo usando blocos de 192 px: {last_error}')
 
 
 def process_job(job_id: str) -> None:
@@ -187,18 +231,13 @@ def process_job(job_id: str) -> None:
             has_alpha = image.ndim == 3 and image.shape[2] == 4
             height, width = image.shape[:2]
             detailed = scale == 8 and options.get('detailMode') == 'detailed'
-            total = tile_count(width, height)
-            if detailed:
-                total += tile_count(width * 4, height * 4)
-            job['progress'] = {'completedTiles': 0, 'totalTiles': total}
             model = get_model(options.get('upscaleModel', 'general'), job)
-            completed = [0]
             job.update(status='processing', phase='inference')
             source_bgr = extend_transparent_colors(image) if has_alpha else image[:, :, :3]
-            first4 = upscale_rgb_tiled(source_bgr, model, job, completed, total)
+            first4, total = upscale_with_fallback(source_bgr, model, job)
             if detailed:
                 job['phase'] = 'second_pass'
-                second4 = upscale_rgb_tiled(first4, model, job, completed, total)
+                second4, total = upscale_with_fallback(first4, model, job)
                 target_size = (width * 8, height * 8)
                 rgb = cv2.resize(second4, target_size, interpolation=cv2.INTER_LANCZOS4)
                 del second4
@@ -221,7 +260,8 @@ def process_job(job_id: str) -> None:
                 raise RuntimeError('Falha ao gerar PNG.')
             encoded.tofile(output_path)
             out_height, out_width = output.shape[:2]
-            result = {'id': result_id, 'filename': f'SuperImagem-{scale}x.png', 'mime': 'image/png', 'width': out_width, 'height': out_height, 'hasAlpha': output.ndim == 3 and output.shape[2] == 4, 'path': str(output_path), 'parentId': source['id']}
+            filename = processed_filename(source['filename'], scale, options.get('upscaleModel', 'general'), options.get('detailMode', 'faithful'))
+            result = {'id': result_id, 'filename': filename, 'mime': 'image/png', 'width': out_width, 'height': out_height, 'hasAlpha': output.ndim == 3 and output.shape[2] == 4, 'path': str(output_path), 'parentId': source['id']}
             artifacts[result_id] = result
             job.update(status='done', phase='done', resultArtifactId=result_id, progress={'completedTiles': total, 'totalTiles': total}, metrics={'durationMs': round((time.perf_counter() - started) * 1000), 'peakRssBytes': peak, 'modelId': MODEL_SPECS[options.get('upscaleModel', 'general')]['name']})
     except InterruptedError as exc:
@@ -239,7 +279,28 @@ def health() -> dict[str, Any]:
     if torch.cuda.is_available():
         props = torch.cuda.get_device_properties(0)
         gpu = {'name': props.name, 'memoryBytes': props.total_memory, 'cuda': torch.version.cuda}
-    return {'name': 'SuperImagem', 'version': '1.0.0-colab', 'engineAvailable': torch.cuda.is_available(), 'engine': 'cuda' if torch.cuda.is_available() else 'cpu', 'gpu': gpu, 'workerBusy': any(j['status'] in ('queued', 'preparing', 'processing') for j in jobs.values())}
+    return {'name': 'SuperImagem', 'version': '1.0.1-colab', 'engineAvailable': torch.cuda.is_available(), 'engine': 'cuda' if torch.cuda.is_available() else 'cpu', 'gpu': gpu, 'modelsReady': sorted(models.keys()), 'workerBusy': any(j['status'] in ('queued', 'preparing', 'processing') for j in jobs.values())}
+
+
+@app.post('/api/models/prepare')
+def prepare_models() -> dict[str, Any]:
+    """Baixa, valida e carrega todos os modelos antes de liberar a interface."""
+    if not torch.cuda.is_available():
+        raise HTTPException(503, 'GPU CUDA não encontrada.')
+    ready = []
+    for kind, spec in MODEL_SPECS.items():
+        state: dict[str, Any] = {}
+        descriptor = get_model(kind, state)
+        model_path = MODELS_DIR / spec['file']
+        ready.append({
+            'kind': kind,
+            'name': spec['name'],
+            'bytes': model_path.stat().st_size,
+            'sha256': spec['sha256'],
+            'scale': int(descriptor.scale),
+            'status': 'validated',
+        })
+    return {'ok': True, 'models': ready}
 
 
 @app.post('/api/artifacts')
@@ -311,13 +372,14 @@ def download_artifact(artifact_id: str, format: str = 'png', background: str = '
     if not item:
         raise HTTPException(404, 'Imagem não encontrada.')
     if format == 'png':
-        return FileResponse(item['path'], media_type='image/png', filename=f'SuperImagem-{artifact_id}.png')
+        return FileResponse(item['path'], media_type='image/png', filename=item['filename'])
     image = Image.open(item['path']).convert('RGBA')
     color = background.lstrip('#')
     rgb = tuple(int(color[i:i+2], 16) for i in (0, 2, 4)) if len(color) == 6 else (0, 0, 0)
     flat = Image.new('RGB', image.size, rgb); flat.paste(image, mask=image.getchannel('A'))
     target = ARTIFACTS_DIR / f'{artifact_id}-black.jpg'; flat.save(target, quality=95, subsampling=0)
-    return FileResponse(target, media_type='image/jpeg', filename=f'SuperImagem-{artifact_id}.jpg')
+    jpeg_name = str(Path(item['filename']).with_suffix('.jpg'))
+    return FileResponse(target, media_type='image/jpeg', filename=jpeg_name)
 
 
 @app.on_event('shutdown')
