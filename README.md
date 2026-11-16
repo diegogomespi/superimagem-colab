@@ -18,8 +18,8 @@ Ampliação de imagens em **2×, 4× e 8×** usando uma GPU NVIDIA T4 no Google 
 
 1. Abra o notebook pelo botão acima.
 2. Selecione **GPU T4** no tipo de ambiente de execução.
-3. Execute as células na ordem.
-4. A interface será aberta dentro do notebook.
+3. Execute a única célula **INICIAR SUPERIMAGEM GPU T4**.
+4. Ao terminar, clique em **ABRIR SUPERIMAGEM EM NOVA ABA**. A interface não ocupa o notebook.
 
 O primeiro processamento baixa o peso oficial do modelo escolhido. Arquivos enviados e resultados ficam somente no armazenamento temporário da sessão do Colab.
 

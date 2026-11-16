@@ -7,7 +7,8 @@ Esta primeira versão executa somente ampliação de imagem em GPU CUDA.
 1. Acesse `https://colab.research.google.com/`.
 2. Envie e abra `SuperImagem_GPU_T4_Colab.ipynb`.
 3. Em **Ambiente de execução > Alterar o tipo de ambiente**, selecione **GPU T4**.
-4. Execute as células na ordem.
+4. Execute a única célula **INICIAR SUPERIMAGEM GPU T4**.
+5. Clique em **ABRIR SUPERIMAGEM EM NOVA ABA**. A interface funciona em uma página separada.
 5. O sistema atualizado é baixado automaticamente do GitHub.
 6. A interface aparece dentro do próprio notebook.
 
