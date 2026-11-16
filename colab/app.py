@@ -296,16 +296,8 @@ def process_job(job_id: str) -> None:
             inspect_path = ARTIFACTS_DIR / f'{result_id}-inspect.webp'
             create_inspection_preview(output, inspect_path)
             out_height, out_width = output.shape[:2]
-            webp_path = None
-            if max(out_width, out_height) <= 16383:
-                job['phase'] = 'encoding_compact'
-                ok_webp, encoded_webp = cv2.imencode('.webp', output, [cv2.IMWRITE_WEBP_QUALITY, 95])
-                if ok_webp:
-                    target_webp = ARTIFACTS_DIR / f'{result_id}-q95.webp'
-                    encoded_webp.tofile(target_webp)
-                    webp_path = str(target_webp)
             filename = processed_filename(source['filename'], scale, options.get('upscaleModel', 'general'), options.get('detailMode', 'faithful'))
-            result = {'id': result_id, 'filename': filename, 'mime': 'image/png', 'width': out_width, 'height': out_height, 'hasAlpha': output.ndim == 3 and output.shape[2] == 4, 'path': str(output_path), 'previewPath': str(preview_path), 'inspectPath': str(inspect_path), 'webpPath': webp_path, 'parentId': source['id']}
+            result = {'id': result_id, 'filename': filename, 'mime': 'image/png', 'width': out_width, 'height': out_height, 'hasAlpha': output.ndim == 3 and output.shape[2] == 4, 'path': str(output_path), 'previewPath': str(preview_path), 'inspectPath': str(inspect_path), 'webpPath': None, 'parentId': source['id']}
             artifacts[result_id] = result
             job.update(status='done', phase='done', resultArtifactId=result_id, progress={'completedTiles': total, 'totalTiles': total}, metrics={'durationMs': round((time.perf_counter() - started) * 1000), 'peakRssBytes': peak, 'modelId': MODEL_SPECS[options.get('upscaleModel', 'general')]['name']})
     except InterruptedError as exc:
@@ -440,8 +432,17 @@ def download_artifact(artifact_id: str, format: str = 'png', background: str = '
     if format == 'png':
         return FileResponse(item['path'], media_type='image/png', filename=item['filename'])
     if format == 'webp':
-        if not item.get('webpPath'):
+        if max(item['width'], item['height']) > 16383:
             raise HTTPException(400, 'WebP suporta no máximo 16383 px por lado. Baixe o PNG sem perdas.')
+        if not item.get('webpPath'):
+            source = np.fromfile(item['path'], dtype=np.uint8)
+            image = cv2.imdecode(source, cv2.IMREAD_UNCHANGED)
+            ok, encoded = cv2.imencode('.webp', image, [cv2.IMWRITE_WEBP_QUALITY, 95])
+            if not ok:
+                raise HTTPException(500, 'Não foi possível gerar o WebP.')
+            target_webp = ARTIFACTS_DIR / f'{artifact_id}-q95.webp'
+            encoded.tofile(target_webp)
+            item['webpPath'] = str(target_webp)
         webp_name = str(Path(item['filename']).with_suffix('.webp'))
         return FileResponse(item['webpPath'], media_type='image/webp', filename=webp_name)
     image = Image.open(item['path']).convert('RGBA')
