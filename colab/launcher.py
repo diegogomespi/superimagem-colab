@@ -121,6 +121,9 @@ def run_from_colab(
             shutil.rmtree(repo, ignore_errors=True)
             _run(["git", "clone", "--depth", "1", "--branch", branch, repo_url, project_dir], "Sincronizando GitHub", "Baixando o SuperImagem...", 20)
 
+        commit = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], cwd=project_dir, text=True).strip()
+        _append(f"VERSÃO GITHUB CARREGADA: {commit}")
+
         _run(
             [sys.executable, "-m", "pip", "install", "-q", "-r", str(repo / "colab" / "requirements-colab.txt")],
             "Instalando dependências",
@@ -131,9 +134,12 @@ def run_from_colab(
 
         _update("Carregando aplicação", "Iniciando o servidor da página externa...", 78)
         subprocess.run(["fuser", "-k", f"{port}/tcp"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+        server_env = os.environ.copy()
+        server_env['SUPERIMAGEM_BUILD_VERSION'] = commit
         SERVER = subprocess.Popen(
             [sys.executable, "-m", "uvicorn", "colab.app:app", "--host", "0.0.0.0", "--port", str(port)],
             cwd=project_dir,
+            env=server_env,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -173,7 +179,7 @@ def run_from_colab(
         from google.colab import output
 
         page_url = output.eval_js(f"google.colab.kernel.proxyPort({port})")
-        _update("Sistema online!", f"GPU: {health['gpu']['name']} | 2 modelos baixados, validados e carregados", 100, page_url=page_url)
+        _update("Sistema online!", f"Versão {health['version']} | GPU: {health['gpu']['name']} | 2 modelos baixados, validados e carregados", 100, page_url=page_url)
     except Exception as exc:
         _append(f"ERRO: {type(exc).__name__}: {exc}")
         _update("Falha ao iniciar", "Abra o log completo para identificar a etapa.", 100, error=str(exc))

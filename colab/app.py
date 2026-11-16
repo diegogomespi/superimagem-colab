@@ -57,12 +57,22 @@ MODEL_SPECS = {
     },
 }
 
-app = FastAPI(title='SuperImagem GPU T4', version='1.0.0')
+BUILD_VERSION = os.environ.get('SUPERIMAGEM_BUILD_VERSION', 'desenvolvimento')
+app = FastAPI(title='SuperImagem GPU T4', version=BUILD_VERSION)
 artifacts: dict[str, dict[str, Any]] = {}
 jobs: dict[str, dict[str, Any]] = {}
 executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='superimagem-gpu')
 active_lock = threading.Lock()
 models: dict[str, Any] = {}
+
+
+@app.middleware('http')
+async def prevent_stale_interface(request, call_next):
+    response = await call_next(request)
+    if request.url.path in ('/', '/index.html') or request.url.path.startswith('/api/'):
+        response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+        response.headers['Pragma'] = 'no-cache'
+    return response
 
 
 class JobOptions(BaseModel):
@@ -313,7 +323,7 @@ def health() -> dict[str, Any]:
     if torch.cuda.is_available():
         props = torch.cuda.get_device_properties(0)
         gpu = {'name': props.name, 'memoryBytes': props.total_memory, 'cuda': torch.version.cuda}
-    return {'name': 'SuperImagem', 'version': '1.0.1-colab', 'engineAvailable': torch.cuda.is_available(), 'engine': 'cuda' if torch.cuda.is_available() else 'cpu', 'gpu': gpu, 'modelsReady': sorted(models.keys()), 'workerBusy': any(j['status'] in ('queued', 'preparing', 'processing') for j in jobs.values())}
+    return {'name': 'SuperImagem', 'version': BUILD_VERSION, 'engineAvailable': torch.cuda.is_available(), 'engine': 'cuda' if torch.cuda.is_available() else 'cpu', 'gpu': gpu, 'modelsReady': sorted(models.keys()), 'workerBusy': any(j['status'] in ('queued', 'preparing', 'processing') for j in jobs.values())}
 
 
 @app.post('/api/models/prepare')
