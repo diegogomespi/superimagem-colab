@@ -16,6 +16,7 @@ Ampliação de imagens em **2×, 4× e 8×** usando uma GPU NVIDIA T4 no Google 
 - Downloads preservam o nome original e informam escala, modelo e modo utilizado.
 - Preview leve de até 1024 px; o download mantém a resolução final completa.
 - Download em PNG sem perdas ou WebP Q95 compacto com transparência.
+- Visualizador compacto com painel lateral, comparação por alça, zoom pela roda do mouse e arraste para navegar.
 
 ## Executar no Colab
 
