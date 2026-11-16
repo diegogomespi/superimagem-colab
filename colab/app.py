@@ -82,7 +82,7 @@ def new_id(prefix: str) -> str:
 
 
 def artifact_public(item: dict[str, Any]) -> dict[str, Any]:
-    return {key: value for key, value in item.items() if key != 'path'}
+    return {key: value for key, value in item.items() if key not in ('path', 'previewPath')}
 
 
 def processed_filename(original: str, scale: int, model_kind: str, detail_mode: str, extension: str = 'png') -> str:
@@ -91,6 +91,17 @@ def processed_filename(original: str, scale: int, model_kind: str, detail_mode: 
     model_tag = 'RealESRGAN-x4plus' if model_kind == 'general' else 'RealESRGAN-anime-6B'
     mode_tag = f"_{'detalhado' if detail_mode == 'detailed' else 'fiel'}" if scale == 8 else ''
     return f'{stem}_upscale-{scale}x_{model_tag}{mode_tag}.{extension}'
+
+
+def create_preview(image: np.ndarray, target: Path, max_side: int = 1024) -> Path:
+    height, width = image.shape[:2]
+    ratio = min(1.0, max_side / max(width, height))
+    preview = image if ratio == 1.0 else cv2.resize(image, (max(1, round(width * ratio)), max(1, round(height * ratio))), interpolation=cv2.INTER_AREA)
+    ok, encoded = cv2.imencode('.png', preview, [cv2.IMWRITE_PNG_COMPRESSION, 3])
+    if not ok:
+        raise RuntimeError('Falha ao gerar preview leve.')
+    encoded.tofile(target)
+    return target
 
 
 def sha256_file(path: Path) -> str:
@@ -259,9 +270,11 @@ def process_job(job_id: str) -> None:
             if not ok:
                 raise RuntimeError('Falha ao gerar PNG.')
             encoded.tofile(output_path)
+            preview_path = ARTIFACTS_DIR / f'{result_id}-preview.png'
+            create_preview(output, preview_path)
             out_height, out_width = output.shape[:2]
             filename = processed_filename(source['filename'], scale, options.get('upscaleModel', 'general'), options.get('detailMode', 'faithful'))
-            result = {'id': result_id, 'filename': filename, 'mime': 'image/png', 'width': out_width, 'height': out_height, 'hasAlpha': output.ndim == 3 and output.shape[2] == 4, 'path': str(output_path), 'parentId': source['id']}
+            result = {'id': result_id, 'filename': filename, 'mime': 'image/png', 'width': out_width, 'height': out_height, 'hasAlpha': output.ndim == 3 and output.shape[2] == 4, 'path': str(output_path), 'previewPath': str(preview_path), 'parentId': source['id']}
             artifacts[result_id] = result
             job.update(status='done', phase='done', resultArtifactId=result_id, progress={'completedTiles': total, 'totalTiles': total}, metrics={'durationMs': round((time.perf_counter() - started) * 1000), 'peakRssBytes': peak, 'modelId': MODEL_SPECS[options.get('upscaleModel', 'general')]['name']})
     except InterruptedError as exc:
@@ -359,11 +372,22 @@ def cancel_job(job_id: str) -> dict[str, bool]:
 
 
 @app.get('/api/artifacts/{artifact_id}/preview')
-def preview(artifact_id: str) -> FileResponse:
+def preview(artifact_id: str, full: bool = False) -> FileResponse:
     item = artifacts.get(artifact_id)
     if not item:
         raise HTTPException(404, 'Imagem não encontrada.')
-    return FileResponse(item['path'], media_type=item['mime'])
+    if full:
+        return FileResponse(item['path'], media_type=item['mime'])
+    preview_path = item.get('previewPath')
+    if not preview_path:
+        source = np.fromfile(item['path'], dtype=np.uint8)
+        image = cv2.imdecode(source, cv2.IMREAD_UNCHANGED)
+        if image is None:
+            raise HTTPException(500, 'Não foi possível gerar o preview.')
+        preview_file = ARTIFACTS_DIR / f"{artifact_id}-preview.png"
+        preview_path = str(create_preview(image, preview_file))
+        item['previewPath'] = preview_path
+    return FileResponse(preview_path, media_type='image/png')
 
 
 @app.get('/api/artifacts/{artifact_id}/download')
