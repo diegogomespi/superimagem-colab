@@ -40,13 +40,13 @@ MODELS_DIR.mkdir(parents=True, exist_ok=True)
 MODEL_SPECS = {
     'general': {
         'name': 'RealESRGAN_x4plus',
-        'url': 'https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/RealESRGAN_x4plus.pth',
+        'url': 'https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth',
         'file': 'RealESRGAN_x4plus.pth',
         'blocks': 23,
     },
     'illustration': {
         'name': 'RealESRGAN_x4plus_anime_6B',
-        'url': 'https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/RealESRGAN_x4plus_anime_6B.pth',
+        'url': 'https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.2.4/RealESRGAN_x4plus_anime_6B.pth',
         'file': 'RealESRGAN_x4plus_anime_6B.pth',
         'blocks': 6,
     },
@@ -85,8 +85,23 @@ def download(url: str, target: Path) -> None:
         return
     import urllib.request
     partial = target.with_suffix(target.suffix + '.part')
-    urllib.request.urlretrieve(url, partial)
-    partial.replace(target)
+    partial.unlink(missing_ok=True)
+    last_error: Exception | None = None
+    for attempt in range(1, 4):
+        try:
+            request = urllib.request.Request(url, headers={'User-Agent': 'SuperImagem-Colab/1.0'})
+            with urllib.request.urlopen(request, timeout=120) as response, partial.open('wb') as output:
+                shutil.copyfileobj(response, output)
+            if partial.stat().st_size <= 1_000_000:
+                raise RuntimeError('O arquivo recebido está incompleto.')
+            partial.replace(target)
+            return
+        except Exception as exc:
+            last_error = exc
+            partial.unlink(missing_ok=True)
+            if attempt < 3:
+                time.sleep(attempt * 2)
+    raise RuntimeError(f'Não foi possível baixar o modelo oficial após 3 tentativas: {last_error}')
 
 
 def get_model(kind: str, job: dict[str, Any]) -> Any:
