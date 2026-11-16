@@ -11,6 +11,8 @@ Ampliação de imagens em **2×, 4× e 8×** usando uma GPU NVIDIA T4 no Google 
 - Comparação entre original e resultado usando os arquivos completos.
 - Visualização ajustada à tela ou em 100% dos pixels reais.
 - Progresso visual por blocos.
+- Inicialização organizada com porcentagem, log completo, cópia do log e diagnóstico de erros.
+- Página externa compatível com o endereço protegido do proxy do Google Colab.
 
 ## Executar no Colab
 
