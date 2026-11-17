@@ -362,6 +362,14 @@ async def upload_artifact(file: UploadFile = File(...)) -> dict[str, Any]:
     return artifact_public(item)
 
 
+@app.get('/api/artifacts/{artifact_id}')
+def get_artifact(artifact_id: str) -> dict[str, Any]:
+    item = artifacts.get(artifact_id)
+    if not item:
+        raise HTTPException(404, 'Imagem não encontrada.')
+    return artifact_public(item)
+
+
 @app.post('/api/jobs', status_code=202)
 async def create_job(request: JobRequest) -> dict[str, Any]:
     if not torch.cuda.is_available():
@@ -430,7 +438,14 @@ def download_artifact(artifact_id: str, format: str = 'png', background: str = '
     if not item:
         raise HTTPException(404, 'Imagem não encontrada.')
     if format == 'png':
-        return FileResponse(item['path'], media_type='image/png', filename=item['filename'])
+        if item['mime'] == 'image/png':
+            return FileResponse(item['path'], media_type='image/png', filename=item['filename'])
+        target_png = ARTIFACTS_DIR / f'{artifact_id}-download.png'
+        if not target_png.exists():
+            with Image.open(item['path']) as source:
+                source.save(target_png, format='PNG', compress_level=3)
+        png_name = str(Path(item['filename']).with_suffix('.png'))
+        return FileResponse(target_png, media_type='image/png', filename=png_name)
     if format == 'webp':
         if max(item['width'], item['height']) > 16383:
             raise HTTPException(400, 'WebP suporta no máximo 16383 px por lado. Baixe o PNG sem perdas.')
